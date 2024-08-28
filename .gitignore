@@ -23,7 +23,6 @@
 hs_err_pid*
 replay_pid*
 
-=======
 
 HELP.md
 .gradle
@@ -69,4 +68,3 @@ out/
 .AppleDouble
 .LSOverride
 
->>>>>>> 0e50cde (init)
