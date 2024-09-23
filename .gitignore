@@ -70,5 +70,5 @@ out/
 
 
 ## API-KEY
-application.properties
-application-API-KEY.properties
+src/main/resources/application.properties
+src/main/resources/application-API-KEY.properties
