@@ -68,3 +68,7 @@ out/
 .AppleDouble
 .LSOverride
 
+
+## API-KEY
+application.properties
+application-API-KEY.properties
