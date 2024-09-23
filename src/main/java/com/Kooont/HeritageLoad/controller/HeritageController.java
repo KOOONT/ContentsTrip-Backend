@@ -1,0 +1,61 @@
+package com.Kooont.HeritageLoad.controller;
+
+import com.Kooont.HeritageLoad.dto.HeritageDetailDto;
+import com.Kooont.HeritageLoad.dto.HeritageItemDto;
+import com.Kooont.HeritageLoad.dto.HeritageResponseDto;
+import com.Kooont.HeritageLoad.service.HeritageService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api")
+public class HeritageController {
+
+    private final HeritageService heritageService;
+
+    public HeritageController(HeritageService heritageService) {
+        this.heritageService = heritageService;
+    }
+
+    // 전체보기 API
+    @GetMapping(value = "/home-all-heritage-list/{pageIndex}/{pageUnit}/{ccbaKdcd}", produces = "application/json")
+    public HeritageResponseDto getHomeAllHeritageList(@PathVariable String pageIndex,
+                                                      @PathVariable String pageUnit,
+                                                      @PathVariable String ccbaKdcd) {
+        return heritageService.fetchHomeAllHeritageItems(pageIndex, pageUnit, ccbaKdcd);
+    }
+
+    // 국보 랜덤 API
+    @GetMapping(value = "/home-random-heritage-list", produces = "application/json")
+    public List<HeritageItemDto> getHomeRandomHeritageList() {
+        return heritageService.fetchHomeRandomHeritageItems();
+    }
+
+    @GetMapping(value = "/home-random-treasure-list", produces = "application/json")
+    public List<HeritageItemDto> getHomeRandomTreasureList() {
+        return heritageService.fetchHomeRandomTreasureItems();
+    }
+
+    @GetMapping(value = "/home-random-historic-list", produces = "application/json")
+    public List<HeritageItemDto> getHomeRandomHistoricList() {
+        return heritageService.fetchHomeRandomHistoricItems();
+    }
+
+    // 특정 국보의 상세 정보 제공
+    @GetMapping(value ="/heritage-detail/{ccbaAsno}/{ccbaKdcd}/{ccbaCtcd}", produces = "application/json")
+    public HeritageDetailDto getHeritageDetail(@PathVariable String ccbaAsno,
+                                               @PathVariable String ccbaKdcd,
+                                               @PathVariable String ccbaCtcd) {
+        return heritageService.fetchHeritageDetailByAsno(ccbaAsno, ccbaKdcd, ccbaCtcd);
+    }
+
+    // 검색
+//    @GetMapping(value ="/heritage-search/{ccbaMnm1}", produces = "application/json")
+//    public List<HeritageItemDto> getHeritageSearch(@PathVariable String ccbaMnm1) {
+//        return heritageService.fetchHeritageSearch(ccbaMnm1);
+//    }
+}
