@@ -1,12 +1,13 @@
 package com.Kooont.HeritageLoad.service;
 
-import com.Kooont.HeritageLoad.dto.HeritageDetailDto;
-import com.Kooont.HeritageLoad.dto.HeritageItemDto;
-import com.Kooont.HeritageLoad.dto.HeritageResponseDto;
-import com.Kooont.HeritageLoad.dto.ImageDto;
+import com.Kooont.HeritageLoad.dto.*;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.w3c.dom.Document;
@@ -18,10 +19,12 @@ import org.xml.sax.InputSource;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -31,6 +34,14 @@ import java.util.stream.Collectors;
 @Service
 public class HeritageService {
     private final RestTemplate restTemplate;
+
+    @Value("${data-key}")
+    private String data_key;
+
+    @Value("${kakao-api-key}")
+    private String kakaoApiKey;
+
+    private String BASE_URL = "https://apis.data.go.kr/B551011/KorService1/locationBasedList1";
 
     private static final Logger logger = LoggerFactory.getLogger(GungListService.class);
 
@@ -192,34 +203,52 @@ public class HeritageService {
     }
 
 
-    // 전체보기
-//    public List<HeritageItemDto> fetchHeritageSearch(ccbaMnm1) {
-//
-//        String url = "http://www.khs.go.kr/cha/SearchKindOpenapiList.do?pageUnit=10&pageIndex=" + pageIndex + "&ccbaCncl=N&ccbaKdcd=" + ccbaKdcd;
-//        String xmlData = restTemplate.getForObject(url, String.class);
-//        List<HeritageItemDto> heritageItems = parseHeritageXml(xmlData);
-//
-//
-//
-//        // 병렬 처리용 Executor 생성 (최대 10개의 스레드를 사용해 병렬 처리)
-//        Executor executor = Executors.newFixedThreadPool(10);
-//
-//        // 각 항목에 대해 비동기로 상세 정보 가져오기 및 이미지 URL 설정
-//        List<CompletableFuture<Void>> futures = heritageItems.stream()
-//                .map(item -> CompletableFuture.runAsync(() -> {
-//                    HeritageDetailDto detail = fetchHeritageDetailByAsno(item.getCcbaAsno(), item.getCcbaKdcd(), item.getCcbaCtcd());
-//                    if (detail != null) {
-//                        item.setImageUrl(detail.getImageUrl());
-//                    }
-//                }, executor))
-//                .collect(Collectors.toList());
-//
-//        // 모든 비동기 작업이 완료될 때까지 대기
-//        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-//        ((ExecutorService) executor).shutdown();
-//
-//        return heritageItems;
-//    }
+    // 검색하기
+    public HeritageResponseDto fetchHeritageSearch(String pageIndex, String pageUnit, String ccbaMnm1) {
+        // 1. 국보 리스트
+        String url = "https://www.khs.go.kr/cha/SearchKindOpenapiList.do?pageIndex=" + pageIndex + "&pageUnit=" + pageUnit + "&ccbaCncl=N&ccbaMnm1=" + ccbaMnm1;
+        String xmlData = restTemplate.getForObject(url, String.class);
+
+        int totalCnt = parseTotalCntFromXml(xmlData);
+
+        // 2. XML 데이터를 파싱하여 HeritageItemDto 리스트로 변환
+        List<HeritageItemDto> heritageItems = parseHeritageXml(xmlData);
+
+        // 3. 필터링: ccbaAsno가 존재하는 항목만 추출
+        List<HeritageItemDto> itemsToFetchDetails = heritageItems.stream()
+                .filter(item -> item.getCcbaAsno() != null && !item.getCcbaAsno().isEmpty())
+                .collect(Collectors.toList());
+
+        // 4. 병렬 처리용 Executor 생성 (최대 10개의 스레드를 사용해 병렬 처리)
+        Executor executor = Executors.newFixedThreadPool(10);
+
+        // 5. 각 항목에 대해 비동기로 상세 정보 가져오기 및 이미지 URL 설정
+        List<CompletableFuture<Void>> futures = itemsToFetchDetails.stream()
+                .map(item -> CompletableFuture.runAsync(() -> {
+                    try {
+                        // 6. 상세 정보 가져오기
+                        HeritageDetailDto detail = fetchHeritageSimpleDetailByAsno(item.getCcbaAsno(), item.getCcbaKdcd(), item.getCcbaCtcd());
+                        if (detail != null) {
+                            // 7. 이미지 URL 설정
+                            item.setImageUrl(detail.getImageUrl());
+                        }
+                    } catch (Exception e) {
+                        // 에러 발생 시 로그 출력
+                        logger.error("Error fetching details for ccbaAsno: {}", item.getCcbaAsno(), e);
+                    }
+                }, executor))
+                .collect(Collectors.toList());
+
+        // 8. 모든 비동기 작업이 완료될 때까지 대기
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        // 9. Executor 종료
+        ((ExecutorService) executor).shutdown();
+
+        // 10. 필터링된 항목 반환 (이미지 URL이 있는 항목만 반환 가능하도록 할 수도 있음)
+        return new HeritageResponseDto(totalCnt, heritageItems);
+    }
+
 
     // 국보의 상세 정보를 ccbaAsno로 요청하여 가져오기
     public HeritageDetailDto fetchHeritageDetailByAsno(String ccbaAsno, String ccbaKdcd, String ccbaCtcd) {
@@ -234,7 +263,62 @@ public class HeritageService {
             // XML 데이터를 String으로 가져옴
             String xmlData = restTemplate.getForObject(detailUrl, String.class);
             HeritageDetailDto detail = parseHeritageDetailXml(xmlData);
-//            logger.info("Received XML Data: {}", xmlData);
+
+            if (detail.getLongitude() == 0) {
+                logger.info("Longitude is 0 for ccbaAsno: {}. Applying alternative logic.", ccbaAsno);
+
+                // Kakao API 호출을 위한 URL 구성
+                String query = URLEncoder.encode(extractBeforeComma(detail.getCcbaLcad()), StandardCharsets.UTF_8); // 예시 주소
+                String url = "https://dapi.kakao.com/v2/local/search/address.json?query=" + extractBeforeComma(detail.getCcbaLcad());
+                logger.info("Longitude is 0 for query: {}. Applying alternative logic.", query);
+
+                // HTTP Headers 설정
+                HttpHeaders headers = new HttpHeaders();
+                headers.add(HttpHeaders.AUTHORIZATION, "KakaoAK " + kakaoApiKey); // 'Authorization' 키는 대문자로 설정
+
+                // 요청 엔티티 생성
+                HttpEntity<String> entity = new HttpEntity<>(headers);
+
+                try {
+                    // GET 요청 보내기
+                    ResponseEntity<String> response = restTemplate.exchange(
+                            url,
+                            HttpMethod.GET,
+                            entity,
+                            String.class
+                    );
+
+                    // 응답 확인
+                    if (response.getStatusCode() == HttpStatus.OK) {
+                        logger.info("Kakao API response: {}", response.getBody());
+
+                        // 응답 본문을 JsonNode로 변환 (Jackson 사용)
+                        ObjectMapper mapper = new ObjectMapper();
+                        JsonNode root = mapper.readTree(response.getBody());
+
+                        // documents 배열에서 첫 번째 요소의 x, y 값 가져오기
+                        JsonNode documents = root.path("documents");
+                        if (documents.isArray() && documents.size() > 0) {
+                            JsonNode firstDoc = documents.get(0); // 첫 번째 문서 선택
+                            String longitude = firstDoc.path("x").asText();  // 경도 (x)
+                            String latitude = firstDoc.path("y").asText();   // 위도 (y)
+
+                            // 파싱한 경도와 위도를 detail 객체에 설정
+                            detail.setLongitude(Double.parseDouble(longitude));
+                            detail.setLatitude(Double.parseDouble(latitude));
+
+                            logger.info("Updated HeritageDetailDto with longitude: {}, latitude: {}", longitude, latitude);
+                        }
+
+                    } else {
+                        logger.error("Kakao API 호출 실패: {}", response.getStatusCode());
+                    }
+
+                } catch (Exception e) {
+                    logger.error("Error during Kakao API request", e);
+                    throw new RuntimeException("Kakao API 호출 중 오류 발생", e);
+                }
+            }
 
             // 영상 데이터 가져오기 (단일 비디오 URL)
             String videoUrl = "https://www.khs.go.kr/cha/SearchVideoOpenapi.do?ccbaKdcd="
@@ -258,6 +342,180 @@ public class HeritageService {
             logger.error("Error fetching or parsing heritage detail", e);
             return null;
         }
+    }
+    public Map<String, List<RelatedAttractionDto>> fetchHeritageDetailRelatedAttractions(double mapX, double mapY)
+            throws URISyntaxException, UnsupportedEncodingException, JsonProcessingException {
+
+        // UTF-8로 인코딩된 API 키
+        String encodedKey = URLEncoder.encode(data_key, "UTF-8");
+
+        // API 요청 URL 생성
+        String[] contentTypes = {"12", "32", "39"}; // 관광지, 숙박, 음식점 contentTypeId
+        String[] typeNames = {"relatedAttractions", "accommodations", "restaurants"}; // 반환할 JSON 키 이름
+        Map<String, List<RelatedAttractionDto>> resultMap = new HashMap<>();
+
+        for (int i = 0; i < contentTypes.length; i++) {
+            String url = String.format(
+                    "https://apis.data.go.kr/B551011/KorService1/locationBasedList1?serviceKey=%s&numOfRows=20&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&_type=json&listYN=Y&arrange=A&mapX=%s&mapY=%s&radius=5000&contentTypeId=%s",
+                    encodedKey, mapX, mapY, contentTypes[i]
+            );
+
+            // URI 생성 및 API 요청
+            URI uri = new URI(url);
+            ResponseEntity<String> responseEntity = restTemplate.getForEntity(uri, String.class);
+
+            // 응답 문자열을 로그로 출력
+            String jsonString = responseEntity.getBody();
+            System.out.println("API Response: " + jsonString); // 응답 내용 로그 출력
+
+            // JSON 데이터를 파싱
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode rootNode = mapper.readTree(jsonString);
+            JsonNode itemsNode = rootNode.path("response").path("body").path("items").path("item");
+
+            // RelatedAttractionDto 리스트 생성
+            List<RelatedAttractionDto> relatedItems = new ArrayList<>();
+            if (itemsNode.isArray()) {
+                for (JsonNode item : itemsNode) {
+                    String contentId = item.path("contentid").asText(null);
+                    String title = item.path("title").asText(null);
+                    String addr1 = item.path("addr1").asText(null);
+                    String addr2 = item.path("addr2").asText(null);
+                    String firstImage = item.path("firstimage").asText(null);
+                    String mapXStr = item.path("mapx").asText(null);
+                    String mapYStr = item.path("mapy").asText(null);
+                    String contentTypeId = item.path("contenttypeid").asText(null);
+
+                    // addr1에서 시/도와 구/군 정보를 추출
+                    String areaName = getSimpleAreaName(extractAreaNameFromAddr(addr1));  // 시/도
+                    logger.info("areaName: {}", areaName);
+                    String districtName = extractDistrictFromAddr(addr1);  // 구/군
+                    String addr3 = (areaName != null ? areaName : "") + " " + (districtName != null ? districtName : "");  // addr3에 시/도 + 구/군 설정
+
+                    // firstImage가 비어 있지 않을 때만 DTO로 변환하여 리스트에 추가
+                    if (firstImage != null && !firstImage.isEmpty()) {
+                        RelatedAttractionDto attraction = new RelatedAttractionDto(contentId, title, addr1, addr2, addr3, firstImage, mapXStr, mapYStr, contentTypeId);
+                        relatedItems.add(attraction);
+
+                        // 최대 10개만 포함되도록 제한
+                        if (relatedItems.size() >= 10) {
+                            break;  // 10개가 되면 반복문 종료
+                        }
+                    }
+                }
+            }
+
+            // 결과 맵에 추가
+            resultMap.put(typeNames[i], relatedItems);
+        }
+
+        return resultMap;  // 관련 관광지, 숙박, 음식점 DTO 리스트를 포함하는 맵 반환
+    }
+
+    public Map<String, List<RelatedAttractionDto>> fetchHeritageDetailRelatedAttractionsArea(Integer maxCount, String areaCode, String sigunguCode)
+            throws URISyntaxException, UnsupportedEncodingException, JsonProcessingException {
+        // UTF-8로 인코딩된 API 키
+        String encodedKey = URLEncoder.encode(data_key, "UTF-8");
+        String originAreaCode = getSimpleAreaName(areaCode);
+        String transAreaCode = getOfficialAreaCode(originAreaCode);
+        String sigunguCodeToNumber ="";
+        String url = String.format(
+                "https://apis.data.go.kr/B551011/KorService1/areaCode1?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&_type=json",
+                encodedKey, 100, transAreaCode);
+
+        // API 요청
+        URI sigunguUri = new URI(url);
+        ResponseEntity<String> sigunguResponse = restTemplate.getForEntity(sigunguUri, String.class);
+
+        // 응답 문자열 출력 (디버그용)
+        String sigunguJson = sigunguResponse.getBody();
+        System.out.println("Sigungu API Response: " + sigunguJson);
+
+        // JSON 데이터를 파싱하여 sigunguCode 찾기
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode sigunguRootNode = mapper.readTree(sigunguJson);
+        JsonNode sigunguItemsNode = sigunguRootNode.path("response").path("body").path("items").path("item");
+
+        if (sigunguItemsNode.isArray()) {
+            for (JsonNode item : sigunguItemsNode) {
+                String name = item.path("name").asText(null); // 구/군 이름
+                String code = item.path("code").asText(null); // 해당 구/군의 코드
+
+                // 입력된 sigunguCode와 name을 비교
+                if (sigunguCode.equals(name)) {
+                    sigunguCodeToNumber = code;  // 일치하는 코드 찾기
+                    break;
+                }
+            }
+        }
+
+        // sigunguCode를 찾았는지 여부를 확인
+        if (sigunguCodeToNumber == null) {
+            throw new IllegalArgumentException("입력된 구/군 이름에 해당하는 코드가 없습니다.");
+        }
+
+
+        // API 요청 URL 생성
+        String[] contentTypes = {"12", "32", "39"}; // 관광지, 숙박, 음식점 contentTypeId
+        String[] typeNames = {"relatedAttractions", "accommodations", "restaurants"}; // 반환할 JSON 키 이름
+        Map<String, List<RelatedAttractionDto>> resultMap = new HashMap<>();
+
+        for (int i = 0; i < contentTypes.length; i++) {
+            String url1 = String.format(
+                    "https://apis.data.go.kr/B551011/KorService1/areaBasedList1?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&sigunguCode=%s&_type=json&listYN=Y&arrange=Q&contentTypeId=%s",
+                    encodedKey, maxCount, transAreaCode, sigunguCodeToNumber, contentTypes[i]
+            );
+
+            // URI 생성 및 API 요청
+            URI uri = new URI(url1);
+            ResponseEntity<String> responseEntity = restTemplate.getForEntity(uri, String.class);
+
+            // 응답 문자열을 로그로 출력
+            String jsonString = responseEntity.getBody();
+            System.out.println("API Response: " + jsonString); // 응답 내용 로그 출력
+
+            // JSON 데이터를 파싱
+            ObjectMapper mapper1 = new ObjectMapper();
+            JsonNode rootNode = mapper1.readTree(jsonString);
+            JsonNode itemsNode = rootNode.path("response").path("body").path("items").path("item");
+
+            // RelatedAttractionDto 리스트 생성
+            List<RelatedAttractionDto> relatedItems = new ArrayList<>();
+            if (itemsNode.isArray()) {
+                for (JsonNode item : itemsNode) {
+                    String contentId = item.path("contentid").asText(null);
+                    String title = item.path("title").asText(null);
+                    String addr1 = item.path("addr1").asText(null);
+                    String addr2 = item.path("addr2").asText(null);
+                    String firstImage = item.path("firstimage").asText(null);
+                    String mapXStr = item.path("mapx").asText(null);
+                    String mapYStr = item.path("mapy").asText(null);
+                    String contentTypeId = item.path("contenttypeid").asText(null);
+
+                    // addr1에서 시/도와 구/군 정보를 추출
+                    String areaName = getSimpleAreaName(extractAreaNameFromAddr(addr1));  // 시/도
+                    logger.info("areaName: {}", areaName);
+                    String districtName = extractDistrictFromAddr(addr1);  // 구/군
+                    String addr3 = (areaName != null ? areaName : "") + " " + (districtName != null ? districtName : "");  // addr3에 시/도 + 구/군 설정
+
+                    // firstImage가 비어 있지 않을 때만 DTO로 변환하여 리스트에 추가
+                    if (firstImage != null && !firstImage.isEmpty()) {
+                        RelatedAttractionDto attraction = new RelatedAttractionDto(contentId, title, addr1, addr2, addr3, firstImage, mapXStr, mapYStr, contentTypeId);
+                        relatedItems.add(attraction);
+
+                        // 최대 10개만 포함되도록 제한
+                        if (relatedItems.size() >= maxCount) {
+                            break;  // 10개가 되면 반복문 종료
+                        }
+                    }
+                }
+            }
+
+            // 결과 맵에 추가
+            resultMap.put(typeNames[i], relatedItems);
+        }
+
+        return resultMap;  // 관련 관광지, 숙박, 음식점 DTO 리스트를 포함하는 맵 반환
     }
 
     public HeritageDetailDto fetchHeritageSimpleDetailByAsno(String ccbaAsno, String ccbaKdcd, String ccbaCtcd) {
@@ -561,4 +819,82 @@ public class HeritageService {
         }
         return "";  // 빈 문자열 반환
     }
+
+    private String extractAreaNameFromAddr(String addr) {
+        if (addr == null || addr.isEmpty()) return null;
+        // 예시: "서울특별시 중구 을지로 66" -> "서울특별시"
+        String[] parts = addr.split(" ");
+
+        return parts.length > 0 ? parts[0] : null;  // 첫 번째 요소를 지역명으로 반환
+    }
+
+    // 구/군 정보 추출
+    private String extractDistrictFromAddr(String addr) {
+        if (addr == null || addr.isEmpty()) return null;
+
+        // 예시: "서울특별시 중구 을지로 66" -> "중구"
+        String[] parts = addr.split(" ");
+        return parts.length > 1 ? parts[1] : null;  // 두 번째 요소를 구/군으로 간주
+    }
+
+    // 지역명을 간단하게 변환하는 메서드
+    private String getSimpleAreaName(String areaName) {
+        if (areaName == null) return null;
+
+        switch (areaName) {
+            case "서울특별시", "서울", "서울시" : return "서울";
+            case "부산광역시", "부산", "부산시": return "부산";
+            case "대구광역시", "대구", "대구시": return "대구";
+            case "인천광역시", "인천", "인천시": return "인천";
+            case "광주광역시", "광주", "광주시": return "광주";
+            case "울산광역시", "울산", "울산시": return "울산";
+            case "세종특별자치시", "세종", "세종시": return "세종";
+            case "경기도", "경기": return "경기";
+            case "강원특별자치도", "강원", "강원도": return "강원";
+            case "충청북도", "충북", "충북도": return "충북";
+            case "충청남도", "충남", "충남도": return "충남";
+            case "전북특별자치도", "전북", "전라북도", "전북도": return "전북";
+            case "전라남도", "전남", "전남도": return "전남";
+            case "경상북도", "경북", "경북도" : return "경북";
+            case "경상남도", "경남", "경남도": return "경남";
+            case "제주특별자치도", "제주시", "제주도": return "제주";
+            default: return areaName;  // 기본적으로 그대로 반환 (일치하지 않는 경우)
+        }
+    }
+
+    public static String extractBeforeComma(String address) {
+        // 쉼표 기준으로 문자열을 자름
+        int index = address.indexOf(',');
+        if (index != -1) {
+            return address.substring(0, index);  // 쉼표 앞의 부분을 반환
+        } else {
+            return address;  // 쉼표가 없으면 전체 주소 반환
+        }
+    }
+
+    private String getOfficialAreaCode(String areaCode) {
+        // 시도명 -> 시도 코드 변환 로직
+        Map<String, String> areaMap = new HashMap<>();
+        // 시도를 공식 명칭으로 매핑
+        areaMap.put("서울", "1");
+        areaMap.put("부산", "6");
+        areaMap.put("대구", "4");
+        areaMap.put("인천", "2");
+        areaMap.put("광주", "5");
+        areaMap.put("대전", "3");
+        areaMap.put("울산", "7");
+        areaMap.put("세종", "8");
+        areaMap.put("경기", "31");
+        areaMap.put("강원", "32");
+        areaMap.put("충북", "33");
+        areaMap.put("충남", "34");
+        areaMap.put("전북", "37");
+        areaMap.put("전남", "38");
+        areaMap.put("경북", "35");
+        areaMap.put("경남", "36");
+        areaMap.put("제주", "39");
+
+        return areaMap.getOrDefault(areaCode, areaCode); // 매핑되지 않으면 그대로 반환
+    }
+
 }
