@@ -15,7 +15,7 @@ COPY src /app/src
 RUN ./gradlew bootJar --no-daemon
 
 # 2. 실행 스테이지: 가벼운 JRE 이미지를 사용하여 실행
-FROM openjdk:17-jdk-slim
+FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 # 빌드 스테이지에서 생성된 JAR 파일만 복사
