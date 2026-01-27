@@ -442,18 +442,12 @@ public class HeritageService {
                 String code = item.path("code").asText(null); // 해당 구/군의 코드
 
                 // 입력된 sigunguCode와 name을 비교
-                if (sigunguCode.equals(name)) {
+                if (sigunguCode != null && sigunguCode.equals(name)) {
                     sigunguCodeToNumber = code;  // 일치하는 코드 찾기
                     break;
                 }
             }
         }
-
-        // sigunguCode를 찾았는지 여부를 확인
-        if (sigunguCodeToNumber == null) {
-            throw new IllegalArgumentException("입력된 구/군 이름에 해당하는 코드가 없습니다.");
-        }
-
 
         // API 요청 URL 생성
         String[] contentTypes = {"12", "32", "39"}; // 관광지, 숙박, 음식점 contentTypeId
@@ -461,10 +455,21 @@ public class HeritageService {
         Map<String, List<RelatedAttractionDto>> resultMap = new HashMap<>();
 
         for (int i = 0; i < contentTypes.length; i++) {
-            String url1 = String.format(
-                    "https://apis.data.go.kr/B551011/KorService1/areaBasedList1?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&sigunguCode=%s&_type=json&listYN=Y&arrange=Q&contentTypeId=%s",
-                    encodedKey, maxCount, transAreaCode, sigunguCodeToNumber, contentTypes[i]
-            );
+            String url1;
+
+            // sigunguCode가 존재하면 sigunguCode를 포함한 URL 생성, 그렇지 않으면 제외
+            if (sigunguCode != null && !sigunguCodeToNumber.isEmpty()) {
+                url1 = String.format(
+                        "https://apis.data.go.kr/B551011/KorService1/areaBasedList1?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&sigunguCode=%s&_type=json&listYN=Y&arrange=Q&contentTypeId=%s",
+                        encodedKey, maxCount, transAreaCode, sigunguCodeToNumber, contentTypes[i]
+                );
+            } else {
+                // sigunguCode를 제외한 URL 생성
+                url1 = String.format(
+                        "https://apis.data.go.kr/B551011/KorService1/areaBasedList1?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&_type=json&listYN=Y&arrange=Q&contentTypeId=%s",
+                        encodedKey, maxCount, transAreaCode, contentTypes[i]
+                );
+            }
 
             // URI 생성 및 API 요청
             URI uri = new URI(url1);
@@ -644,6 +649,7 @@ public class HeritageService {
 
                 // item 태그 내 정보
                 detail.setCcmaName(getTagValue("ccmaName", itemElement));
+                detail.setCrltsnoNm(getTagValue("crltsnoNm", itemElement)); // crltsnoNm 값 가져오기
                 detail.setCcbaMnm1(getTagValue("ccbaMnm1", itemElement));
                 detail.setCcbaMnm2(getTagValue("ccbaMnm2", itemElement));
                 detail.setGcodeName(getTagValue("gcodeName", itemElement));

@@ -70,5 +70,6 @@ out/
 
 
 ## API-KEY
+.env
 src/main/resources/application.properties
 src/main/resources/application-API-KEY.properties

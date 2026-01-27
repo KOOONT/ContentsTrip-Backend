@@ -14,6 +14,7 @@ public class HeritageDetailDto {
     private double longitude;
     private double latitude;
     private String ccmaName;
+    private String crltsnoNm;
     private String ccbaMnm1;
     private String ccbaMnm2;
     private String gcodeName;

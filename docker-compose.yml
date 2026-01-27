@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: heritageload-app
+    ports:
+      - "8080:8080"
+    environment:
+      # 서버 배포 시 실제 API 키를 환경 변수로 설정하거나 .env 파일을 사용하세요.
+      # 기본값은 application.properties에 설정된 값을 따릅니다.
+      - DATA_GO_KR_API_KEY=${DATA_GO_KR_API_KEY}
+      - KAKAO_API_KEY=${KAKAO_API_KEY}
+    restart: always
+
+# Tip: .env 파일을 생성하여 키를 관리하는 것을 추천합니다.
+# DATA_GO_KR_API_KEY=your_key_here
+# KAKAO_API_KEY=your_key_here

@@ -69,11 +69,19 @@ public class HeritageController {
         return relatedAttractions; // Map 형태로 반환
     }
 
-    @GetMapping(value = "/heritage-detail-related-attractions-area/{maxCount}/{areaCode}/{sigunguCode}", produces = "application/json")
+    @GetMapping(value = "/heritage-detail-related-attractions-area/{maxCount}/{areaCode}/{sigunguCode:.+}", produces = "application/json")
     public Map<String, List<RelatedAttractionDto>> getHeritageDetailRelatedAttractions(@PathVariable Integer maxCount,
                                                                                        @PathVariable String areaCode,
-                                                                                       @PathVariable String sigunguCode)
+                                                                                       @PathVariable(value = "sigunguCode", required = false) String sigunguCode)
             throws UnsupportedEncodingException, URISyntaxException, JsonProcessingException {
+        System.out.println(sigunguCode);
+
+
+        if (sigunguCode == null || sigunguCode.isEmpty()) {
+            // sigunguCode가 없는 경우 처리 로직
+            sigunguCode = "";  // 필요에 따라 디폴트 값을 지정
+        }
+
         // heritageService 메서드 호출
         Map<String, List<RelatedAttractionDto>> relatedAttractions = heritageService.fetchHeritageDetailRelatedAttractionsArea(maxCount, areaCode, sigunguCode);
 
