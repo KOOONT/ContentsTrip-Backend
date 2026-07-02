@@ -92,7 +92,7 @@ public class HeritageTouristService {
                             );
                             if (detail != null) {
                                 if (hasText(detail.getImageUrl())) {
-                                    item.setImageUrl(detail.getImageUrl());
+                                    item.setImageUrl(heritageService.toThumbnailImageUrl(detail.getImageUrl()));
                                 }
                                 if (hasText(detail.getCcmaName())) {
                                     item.setCcmaName(detail.getCcmaName());

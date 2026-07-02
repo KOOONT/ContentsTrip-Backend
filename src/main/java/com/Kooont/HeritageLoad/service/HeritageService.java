@@ -40,6 +40,7 @@ import java.util.stream.Collectors;
 @Service
 public class HeritageService {
     private final RestTemplate restTemplate;
+    private final ImageProxyService imageProxyService;
 
     @Value("${data-key}")
     private String data_key;
@@ -57,6 +58,9 @@ public class HeritageService {
     private static final long SEARCH_CACHE_TTL_MILLIS = 30L * 60 * 1000;
     private static final long RELATED_CACHE_TTL_MILLIS = 60L * 60 * 1000;
     private static final int RELATED_RECOMMENDATION_MAX_COUNT = 10;
+    private static final int THUMBNAIL_IMAGE_WIDTH = 360;
+    private static final int DETAIL_IMAGE_WIDTH = 720;
+    private static final int DETAIL_GALLERY_IMAGE_WIDTH = 900;
 
     private final ConcurrentHashMap<String, CacheEntry<HeritageDetailDto>> detailCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CacheEntry<HeritageDetailDto>> simpleDetailCache = new ConcurrentHashMap<>();
@@ -64,24 +68,32 @@ public class HeritageService {
     private final ConcurrentHashMap<String, CacheEntry<HeritageResponseDto>> heritageResponseCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CacheEntry<Map<String, List<RelatedAttractionDto>>>> relatedAttractionCache = new ConcurrentHashMap<>();
 
-    private static final Logger logger = LoggerFactory.getLogger(GungListService.class);
+    private static final Logger logger = LoggerFactory.getLogger(HeritageService.class);
 
-    public HeritageService(RestTemplate restTemplate) {
+    public HeritageService(RestTemplate restTemplate, ImageProxyService imageProxyService) {
         this.restTemplate = restTemplate;
+        this.imageProxyService = imageProxyService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void warmHomeCaches() {
         CompletableFuture.runAsync(() -> {
             try {
-                fetchHomeRandomHeritageItems();
-                fetchHomeRandomTreasureItems();
-                fetchHomeRandomHistoricItems();
+                warmHomeImages(fetchHomeRandomHeritageItems());
+                warmHomeImages(fetchHomeRandomTreasureItems());
+                warmHomeImages(fetchHomeRandomHistoricItems());
                 fetchHomeAllHeritageItems("1", "10", "11");
             } catch (Exception e) {
                 logger.warn("Failed to warm heritage home caches", e);
             }
         });
+    }
+
+    private void warmHomeImages(List<HeritageItemDto> items) {
+        imageProxyService.warmImages(
+                items.stream().map(HeritageItemDto::getImageUrl).filter(this::hasText).collect(Collectors.toList()),
+                THUMBNAIL_IMAGE_WIDTH,
+                4);
     }
 
     // ccbaCtcd에 맞는 국보 리스트를 가져오는 메서드
@@ -96,7 +108,7 @@ public class HeritageService {
     }
 
     private List<HeritageItemDto> loadHeritageItemsByCtcd(String ccbaCtcd, boolean enrichDetails) {
-        logger.info("fetchHeritageItemsByCtcd for ccbaCtcd: {}", ccbaCtcd);
+        logger.debug("fetchHeritageItemsByCtcd for ccbaCtcd: {}", ccbaCtcd);
 
         // API 요청을 통해 지역에 해당하는 국보 데이터를 가져옴
         String url = "https://www.khs.go.kr/cha/SearchKindOpenapiList.do?pageUnit=100&ccbaCncl=N&ccbaKdcd=11&ccbaCtcd="
@@ -144,7 +156,7 @@ public class HeritageService {
     }
 
     private List<HeritageItemDto> loadHomeRandomHeritageItems() {
-        logger.info("fetchHomeRandomHeritageItems");
+        logger.debug("fetchHomeRandomHeritageItems");
 
         // 총 359개의 데이터가 있을 때 페이지당 10개라면 총 36 페이지
         int totalPages = 36;
@@ -187,7 +199,7 @@ public class HeritageService {
     }
 
     private List<HeritageItemDto> loadHomeRandomTreasureItems() {
-        logger.info("fetchHomeRandomTreasureItems");
+        logger.debug("fetchHomeRandomTreasureItems");
 
         // 총 359개의 데이터가 있을 때 페이지당 10개라면 총 36 페이지
         int totalPages = 242;
@@ -230,7 +242,7 @@ public class HeritageService {
     }
 
     private List<HeritageItemDto> loadHomeRandomHistoricItems() {
-        logger.info("fetchHomeRandomTreasureItems");
+        logger.debug("fetchHomeRandomHistoricItems");
 
         // 총 359개의 데이터가 있을 때 페이지당 10개라면 총 36 페이지
         int totalPages = 57;
@@ -324,7 +336,7 @@ public class HeritageService {
     }
 
     private HeritageDetailDto loadHeritageDetailByAsno(String ccbaAsno, String ccbaKdcd, String ccbaCtcd) {
-        logger.info("fetchHeritageDetailByAsno: ccbaAsno={}", ccbaAsno);
+        logger.debug("fetchHeritageDetailByAsno: ccbaAsno={}", ccbaAsno);
 
         try {
             // XML 데이터를 가져오기 위한 URL 구성
@@ -337,14 +349,14 @@ public class HeritageService {
             HeritageDetailDto detail = parseHeritageDetailXml(xmlData);
 
             if (detail.getLongitude() == 0) {
-                logger.info("Longitude is 0 for ccbaAsno: {}. Applying alternative logic.", ccbaAsno);
+                logger.debug("Longitude is 0 for ccbaAsno: {}. Applying alternative logic.", ccbaAsno);
 
                 // Kakao API 호출을 위한 URL 구성
                 String query = URLEncoder.encode(extractBeforeComma(detail.getCcbaLcad()), StandardCharsets.UTF_8); // 예시
                                                                                                                     // 주소
                 String url = "https://dapi.kakao.com/v2/local/search/address.json?query="
                         + extractBeforeComma(detail.getCcbaLcad());
-                logger.info("Longitude is 0 for query: {}. Applying alternative logic.", query);
+                logger.debug("Longitude is 0 for query: {}. Applying alternative logic.", query);
 
                 // HTTP Headers 설정
                 HttpHeaders headers = new HttpHeaders();
@@ -363,7 +375,7 @@ public class HeritageService {
 
                     // 응답 확인
                     if (response.getStatusCode() == HttpStatus.OK) {
-                        logger.info("Kakao API response: {}", response.getBody());
+                        logger.debug("Kakao API response: {}", response.getBody());
 
                         // 응답 본문을 JsonNode로 변환 (Jackson 사용)
                         ObjectMapper mapper = new ObjectMapper();
@@ -380,7 +392,7 @@ public class HeritageService {
                             detail.setLongitude(Double.parseDouble(longitude));
                             detail.setLatitude(Double.parseDouble(latitude));
 
-                            logger.info("Updated HeritageDetailDto with longitude: {}, latitude: {}", longitude,
+                            logger.debug("Updated HeritageDetailDto with longitude: {}, latitude: {}", longitude,
                                     latitude);
                         }
 
@@ -398,7 +410,7 @@ public class HeritageService {
             String videoUrl = "https://www.khs.go.kr/cha/SearchVideoOpenapi.do?ccbaKdcd="
                     + ccbaKdcd + "&ccbaAsno=" + ccbaAsno + "&ccbaCtcd=" + ccbaCtcd + "&ccbaGbn=kr";
             String videoData = getXmlFromUrl(videoUrl);
-            logger.info("Received Video Data: {}", videoData); // 로그로 확인
+            logger.debug("Received Video Data: {}", videoData);
 
             // 비디오 URL 파싱 후 단일 URL로 설정
             String parsedVideoUrl = parseSingleHeritageVideoXml(videoData);
@@ -440,40 +452,19 @@ public class HeritageService {
         // API 요청 URL 생성
         String[] contentTypes = { "12", "32", "39" }; // 관광지, 숙박, 음식점 contentTypeId
         String[] typeNames = { "relatedAttractions", "accommodations", "restaurants" }; // 반환할 JSON 키 이름
+        String[] urls = new String[contentTypes.length];
         Map<String, List<RelatedAttractionDto>> resultMap = createEmptyRelatedAttractionMap();
         LDongCode lDongCode = fetchLDongCodeByCoordinate(mapX, mapY);
         String lDongParams = buildLDongParams(lDongCode);
 
         for (int i = 0; i < contentTypes.length; i++) {
-            String url = String.format(
+            urls[i] = String.format(
                     "https://apis.data.go.kr/B551011/KorService2/locationBasedList2?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&_type=json&arrange=C&mapX=%s&mapY=%s&radius=1000&contentTypeId=%s%s%s",
                     encodedKey, relatedFetchRows(RELATED_RECOMMENDATION_MAX_COUNT), mapX, mapY, contentTypes[i], lDongParams,
                     buildTourApiV2ClassificationParams(contentTypes[i]));
-
-            JsonNode itemsNode;
-            try {
-                // URI 생성 및 API 요청
-                URI uri = new URI(url);
-                ResponseEntity<String> responseEntity = restTemplate.getForEntity(uri, String.class);
-
-                // 응답 문자열을 로그로 출력
-                String jsonString = responseEntity.getBody();
-                System.out.println("API Response: " + jsonString); // 응답 내용 로그 출력
-
-                // JSON 데이터를 파싱
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode rootNode = mapper.readTree(jsonString);
-                itemsNode = rootNode.path("response").path("body").path("items").path("item");
-            } catch (RestClientException | JsonProcessingException e) {
-                logger.error("Error fetching related attractions from external tourism API", e);
-                continue;
-            }
-
-            List<RelatedAttractionDto> relatedItems = buildRelatedItems(itemsNode, RELATED_RECOMMENDATION_MAX_COUNT);
-
-            // 결과 맵에 추가
-            resultMap.put(typeNames[i], relatedItems);
         }
+
+        fetchRelatedItemsInParallel(resultMap, typeNames, urls, RELATED_RECOMMENDATION_MAX_COUNT);
 
         return resultMap; // 관련 관광지, 숙박, 음식점 DTO 리스트를 포함하는 맵 반환
     }
@@ -512,9 +503,7 @@ public class HeritageService {
             URI sigunguUri = new URI(url);
             ResponseEntity<String> sigunguResponse = restTemplate.getForEntity(sigunguUri, String.class);
 
-            // 응답 문자열 출력 (디버그용)
             String sigunguJson = sigunguResponse.getBody();
-            System.out.println("Sigungu API Response: " + sigunguJson);
 
             // JSON 데이터를 파싱하여 sigunguCode 찾기
             ObjectMapper mapper = new ObjectMapper();
@@ -542,49 +531,65 @@ public class HeritageService {
         String lDongParams = buildLDongParams(lDongCode);
 
         // API 요청 URL 생성
+        String[] urls = new String[contentTypes.length];
         for (int i = 0; i < contentTypes.length; i++) {
-            String url1;
-
             // sigunguCode가 존재하면 sigunguCode를 포함한 URL 생성, 그렇지 않으면 제외
             if (sigunguCode != null && !sigunguCodeToNumber.isEmpty()) {
-                url1 = String.format(
+                urls[i] = String.format(
                         "https://apis.data.go.kr/B551011/KorService2/areaBasedList2?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&sigunguCode=%s&_type=json&arrange=C&contentTypeId=%s%s%s",
                         encodedKey, relatedFetchRows(maxCount), transAreaCode, sigunguCodeToNumber, contentTypes[i], lDongParams,
                         buildTourApiV2ClassificationParams(contentTypes[i]));
             } else {
                 // sigunguCode를 제외한 URL 생성
-                url1 = String.format(
+                urls[i] = String.format(
                         "https://apis.data.go.kr/B551011/KorService2/areaBasedList2?serviceKey=%s&numOfRows=%s&pageNo=1&MobileOS=ETC&MobileApp=HeritageLoad&areaCode=%s&_type=json&arrange=C&contentTypeId=%s%s%s",
                         encodedKey, relatedFetchRows(maxCount), transAreaCode, contentTypes[i], lDongParams,
                         buildTourApiV2ClassificationParams(contentTypes[i]));
             }
-
-            JsonNode itemsNode;
-            try {
-                // URI 생성 및 API 요청
-                URI uri = new URI(url1);
-                ResponseEntity<String> responseEntity = restTemplate.getForEntity(uri, String.class);
-
-                // 응답 문자열을 로그로 출력
-                String jsonString = responseEntity.getBody();
-                System.out.println("API Response: " + jsonString); // 응답 내용 로그 출력
-
-                // JSON 데이터를 파싱
-                ObjectMapper mapper1 = new ObjectMapper();
-                JsonNode rootNode = mapper1.readTree(jsonString);
-                itemsNode = rootNode.path("response").path("body").path("items").path("item");
-            } catch (RestClientException | JsonProcessingException e) {
-                logger.error("Error fetching related attractions from external tourism API", e);
-                continue;
-            }
-
-            List<RelatedAttractionDto> relatedItems = buildRelatedItems(itemsNode, maxCount);
-
-            // 결과 맵에 추가
-            resultMap.put(typeNames[i], relatedItems);
         }
 
+        fetchRelatedItemsInParallel(resultMap, typeNames, urls, maxCount);
+
         return resultMap; // 관련 관광지, 숙박, 음식점 DTO 리스트를 포함하는 맵 반환
+    }
+
+    private void fetchRelatedItemsInParallel(Map<String, List<RelatedAttractionDto>> resultMap, String[] typeNames,
+            String[] urls, Integer maxCount) {
+        ExecutorService executor = Executors.newFixedThreadPool(typeNames.length);
+        try {
+            List<CompletableFuture<Map.Entry<String, List<RelatedAttractionDto>>>> futures = new ArrayList<>();
+            for (int i = 0; i < typeNames.length; i++) {
+                final int index = i;
+                futures.add(CompletableFuture.supplyAsync(
+                        () -> fetchRelatedItems(typeNames[index], urls[index], maxCount), executor));
+            }
+
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            for (CompletableFuture<Map.Entry<String, List<RelatedAttractionDto>>> future : futures) {
+                Map.Entry<String, List<RelatedAttractionDto>> entry = future.join();
+                resultMap.put(entry.getKey(), entry.getValue());
+            }
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    private Map.Entry<String, List<RelatedAttractionDto>> fetchRelatedItems(String typeName, String url,
+            Integer maxCount) {
+        try {
+            ResponseEntity<String> responseEntity = restTemplate.getForEntity(new URI(url), String.class);
+            String jsonString = responseEntity.getBody();
+            if (!hasText(jsonString)) {
+                return new AbstractMap.SimpleEntry<>(typeName, new ArrayList<>());
+            }
+
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode itemsNode = mapper.readTree(jsonString).path("response").path("body").path("items").path("item");
+            return new AbstractMap.SimpleEntry<>(typeName, buildRelatedItems(itemsNode, maxCount));
+        } catch (RestClientException | JsonProcessingException | URISyntaxException e) {
+            logger.error("Error fetching {} from external tourism API", typeName, e);
+            return new AbstractMap.SimpleEntry<>(typeName, new ArrayList<>());
+        }
     }
 
     private Map<String, List<RelatedAttractionDto>> createEmptyRelatedAttractionMap() {
@@ -640,8 +645,10 @@ public class HeritageService {
         String title = item.path("title").asText(null);
         String addr1 = item.path("addr1").asText(null);
         String addr2 = item.path("addr2").asText(null);
-        String firstImage = normalizeTourImageUrl(
-                firstNonBlank(item.path("firstimage").asText(""), item.path("firstimage2").asText("")));
+        String firstImage = toClientImageUrl(
+                normalizeTourImageUrl(firstNonBlank(item.path("firstimage").asText(""),
+                        item.path("firstimage2").asText(""))),
+                THUMBNAIL_IMAGE_WIDTH);
         String mapXStr = item.path("mapx").asText(null);
         String mapYStr = item.path("mapy").asText(null);
         String contentTypeId = item.path("contenttypeid").asText(null);
@@ -651,7 +658,6 @@ public class HeritageService {
         }
 
         String areaName = getSimpleAreaName(extractAreaNameFromAddr(addr1));
-        logger.info("areaName: {}", areaName);
         String districtName = extractDistrictFromAddr(addr1);
         String addr3 = (areaName != null ? areaName : "") + " " + (districtName != null ? districtName : "");
 
@@ -793,7 +799,7 @@ public class HeritageService {
     }
 
     private HeritageDetailDto loadHeritageSimpleDetailByAsno(String ccbaAsno, String ccbaKdcd, String ccbaCtcd) {
-        logger.info("fetchHeritageDetailByAsno: ccbaAsno={}", ccbaAsno);
+        logger.debug("fetchHeritageDetailByAsno: ccbaAsno={}", ccbaAsno);
 
         String detailUrl = "https://www.khs.go.kr/cha/SearchKindOpenapiDt.do?ccbaKdcd="
                 + ccbaKdcd + "&ccbaAsno=" + ccbaAsno + "&ccbaCtcd=" + ccbaCtcd;
@@ -833,7 +839,7 @@ public class HeritageService {
         }
 
         if (hasText(detail.getImageUrl())) {
-            item.setImageUrl(detail.getImageUrl());
+            item.setImageUrl(toThumbnailImageUrl(detail.getImageUrl()));
         }
         if (!includeTextFields) {
             return;
@@ -954,8 +960,7 @@ public class HeritageService {
             Element itemElement = (Element) document.getElementsByTagName("item").item(0);
 
             if (itemElement != null) {
-                detail.setCcbaLcad(getTagValue("ccbaLcad", itemElement)); // 로깅 추가
-                logger.info("ccbaLcad Value: {}", detail.getCcbaLcad()); // 로깅 확인
+                detail.setCcbaLcad(getTagValue("ccbaLcad", itemElement));
                 // 기본 정보
                 detail.setCcbaKdcd(getTagValue("ccbaKdcd", document.getDocumentElement()));
                 detail.setCcbaAsno(getTagValue("ccbaAsno", document.getDocumentElement()));
@@ -983,7 +988,8 @@ public class HeritageService {
                 detail.setCcbaAdmin(getTagValue("ccbaAdmin", itemElement));
                 detail.setCcbaCncl(getTagValue("ccbaCncl", itemElement));
                 detail.setCcbaCndt(getTagValue("ccbaCndt", itemElement));
-                detail.setImageUrl(normalizeImageUrl(getTagValue("imageUrl", itemElement)));
+                detail.setImageUrl(toClientImageUrl(normalizeImageUrl(getTagValue("imageUrl", itemElement)),
+                        DETAIL_IMAGE_WIDTH));
                 detail.setContent(getTagValue("content", itemElement));
             } else {
                 logger.error("Item element not found in the XML response.");
@@ -1009,7 +1015,6 @@ public class HeritageService {
             NodeList itemList = document.getElementsByTagName("item");
             for (int i = 0; i < itemList.getLength(); i++) {
                 Element itemElement = (Element) itemList.item(i);
-                logger.info("itemElement : {}", itemList);
                 // 각 <item> 안의 <videoUrl> 태그 값을 가져옴
                 String videoUrl = getTagValue("videoUrl", itemElement);
 
@@ -1081,12 +1086,9 @@ public class HeritageService {
                     // 이미지 URL이 유효한 경우 리스트에 추가
                     if (imageUrl != null && !imageUrl.isEmpty()) {
                         ImageDto imageDto = new ImageDto();
-                        imageDto.setImageUrl(normalizeImageUrl(imageUrl));
+                        imageDto.setImageUrl(toClientImageUrl(normalizeImageUrl(imageUrl),
+                                DETAIL_GALLERY_IMAGE_WIDTH));
                         imageDto.setDescription(description);
-
-                        // 로깅: 각각의 이미지 정보 확인
-                        logger.info("Image URL: {}", imageUrl);
-                        logger.info("Description: {}", description);
 
                         imageList.add(imageDto);
                     }
@@ -1283,6 +1285,10 @@ public class HeritageService {
         return value != null && !value.trim().isEmpty();
     }
 
+    public String toThumbnailImageUrl(String imageUrl) {
+        return toClientImageUrl(imageUrl, THUMBNAIL_IMAGE_WIDTH);
+    }
+
     private String normalizeImageUrl(String imageUrl) {
         if (!hasText(imageUrl)) {
             return "";
@@ -1295,6 +1301,13 @@ public class HeritageService {
             return "";
         }
         return imageUrl.trim().replaceFirst("^http://tong\\.visitkorea\\.or\\.kr/", "https://tong.visitkorea.or.kr/");
+    }
+
+    private String toClientImageUrl(String imageUrl, int width) {
+        if (!hasText(imageUrl)) {
+            return "";
+        }
+        return imageProxyService.toProxyUrl(imageUrl, width);
     }
 
     private void sleepBeforeRetry(int attempt) {
